@@ -20,7 +20,7 @@ from PyInstaller.building.osx import BUNDLE
 
 block_cipher = None
 
-a = Analysis(['od_normalizer.py'],  # replace me with your path
+a = Analysis(['od_normalizer.py'],  # The local path to the script for compilation
              pathex=['/Users/bermanlab/Dropbox (Berman Lab)/Berman Lab Staff Files/Vladimir/od_normalizer.py'],
              hiddenimports=[],
              hookspath=None,
