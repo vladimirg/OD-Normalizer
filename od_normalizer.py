@@ -1,32 +1,36 @@
 #!/usr/bin/env python3
 
-import argparse
 import pandas as pd
 from openpyxl import load_workbook
 import os
 from gooey import GooeyParser, Gooey 
+from itertools import product
 
 # NB: run with --ignore-gooey to force the CLI.
+# NB: run using pythonw (instead of regular python) on the command line to
+#     invoke this script as a GUI.
 @Gooey
 def main():
     parser = GooeyParser()
     # TODO: how to make the labels of the arguments in Gooey nicer?
     # (Specifically, how to divorce them from their attribute names?)
     parser.add_argument(
-        "in_file", type=str, widget="FileChooser",
+        "--in-file", type=str, widget="FileChooser",
+        metavar="Input Excel file", required=True,
         help="The input Excel file from Sunrise. The ODs should be stored in Sheet1 within the workbook.")
-    parser.add_argument("target_od", type=float)
+    parser.add_argument("--target-od", type=float, metavar="Target OD", required=True)
     parser.add_argument(
-        "final_volume", type=int, default=200,
-        help="The final volume in the Target plate in µL.")
+        "--final-volume", type=int, default=200,
+        metavar="Final volume (µL)", help="The final volume in the Target plate.")
     parser.add_argument(
-        "min_pipette", type=int, default=1,
-        help="The minimum pipetting volume in µL.")
+        "--min-pipette", type=int, default=5,
+        metavar="Minimum pipetting volume (µL)")
     parser.add_argument(
-        "max_pipette", type=int, default=197,
-        help="The maximum pipetting volume µL.")
+        "--max-pipette", type=int, default=197,
+        metavar="Maximum pipetting volume (µL)"),
     parser.add_argument(
-        "out_folder", type=str, widget="DirChooser", default=os.getcwd(),
+        "--out-folder", type=str, widget="DirChooser", default=os.getcwd(),
+        metavar="Output folder",
         help="The output folder where 'ddw.csv' and 'source.csv' will be saved.")
     
     args = parser.parse_args()
