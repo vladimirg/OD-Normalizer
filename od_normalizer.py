@@ -47,8 +47,8 @@ def main():
         in_file,
         skiprows=row_ix+1,
         nrows=8,
-        usecols="B:M"
-    )
+        usecols="B:M",
+    ).set_index(pd.Index(list("ABCDEFGH")))
     
     target_od = args.target_od
     target_vol = args.final_volume
@@ -62,6 +62,27 @@ def main():
     
     source_df = (target_od * target_vol / df).round().astype(int)
     ddw_df = (target_vol - source_df).round().astype(int)
+    
+    df_labels = list(product(df.index, df.columns))
+    
+    data_to_test = (
+        # DataFrame, func(actual), message, default
+        (source_df, lambda a: a < min_pipette,
+         f"Aspiration volume from Source is smaller than the minimum {min_pipette} uL in these wells:"),
+        (source_df, lambda a: a > max_pipette,
+         f"Aspiration volume from Source is larger than the maximum {max_pipette} uL in these wells:"),
+        (ddw_df, lambda a: a < min_pipette,
+         f"Aspiration volume from DDW is smaller than the minimum {min_pipette} uL in these wells:"),
+        (ddw_df, lambda a: a > max_pipette,
+         f"Aspiration volume from DDW is larger than the maximum {max_pipette} uL in these wells:"),
+    )
+    
+    for test_df, test_func, msg in data_to_test:
+        off_labels = [l for l in df_labels if test_func(test_df.loc[l[0], l[1]])]
+        if off_labels:
+            print(msg)
+            for row_ix, col_ix in off_labels:
+                print(f"{row_ix}{col_ix} ({'ABCDEFGH'.index(row_ix)*12+col_ix}): {test_df.loc[row_ix, col_ix]}")
     
     out_folder = args.out_folder
     ddw_fname = "ddw.csv"
