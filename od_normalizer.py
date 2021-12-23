@@ -9,7 +9,7 @@ from itertools import product
 # NB: run with --ignore-gooey to force the CLI.
 # NB: run using pythonw (instead of regular python) on the command line to
 #     invoke this script as a GUI.
-@Gooey
+@Gooey(program_name="OD Normalizer")
 def main():
     parser = GooeyParser()
     # TODO: how to make the labels of the arguments in Gooey nicer?
@@ -68,13 +68,13 @@ def main():
     data_to_test = (
         # DataFrame, func(actual), message, default
         (source_df, lambda a: a < min_pipette,
-         f"Aspiration volume from Source is smaller than the minimum {min_pipette} uL in these wells:"),
+         f"Aspiration volume from Source is smaller than the minimum {min_pipette} µL in these wells:"),
         (source_df, lambda a: a > max_pipette,
-         f"Aspiration volume from Source is larger than the maximum {max_pipette} uL in these wells:"),
+         f"Aspiration volume from Source is larger than the maximum {max_pipette} µL in these wells:"),
         (ddw_df, lambda a: a < min_pipette,
-         f"Aspiration volume from DDW is smaller than the minimum {min_pipette} uL in these wells:"),
+         f"Aspiration volume from DDW is smaller than the minimum {min_pipette} µL in these wells:"),
         (ddw_df, lambda a: a > max_pipette,
-         f"Aspiration volume from DDW is larger than the maximum {max_pipette} uL in these wells:"),
+         f"Aspiration volume from DDW is larger than the maximum {max_pipette} µL in these wells:"),
     )
     
     for test_df, test_func, msg in data_to_test:
