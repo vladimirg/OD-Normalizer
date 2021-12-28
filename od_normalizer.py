@@ -88,18 +88,24 @@ def main():
     ddw_fname = "ddw.csv"
     source_fname = "source.csv"
     
+    # The ddw-to-target is NOT a worklist, but instead a CSV file from which
+    # a special script (DDW_to_Target_variable_volume.exd) sent by Neotec can
+    # read the data.
+    # The format is a CSV where the first column is the row label ("Tip" and
+    # "Volume", but can be anything), and the subsequent columns are the data -
+    # the tip identifiers (1-8) on the first row and then the volumes on the
+    # second row.
+    with open(os.path.join(out_folder, ddw_fname), "w") as ddw_file:
+        ddw_file.write(f"Tip,{','.join(str(i) for i in list(range(1, 9))*8)}\n")
+        ddw_file.write(f"Volume,{','.join(','.join(ddw_df[i].astype(str)) for i in ddw_df)}\n")
+    
+    # The source-to-target is a worklist (CSV) with the following format:
     # Output format by columns:
     # 1 - source name
     # 2 - source position
     # 3 - target name
     # 4 - target position
     # 5 - volume
-    with open(os.path.join(out_folder, ddw_fname), "w") as ddw_file:
-        for col_ix, column in enumerate(ddw_df):
-            series = ddw_df.loc[:, column]
-            for vol_ix, vol in enumerate(series):
-                ddw_file.write(f"DDW,{vol_ix+1},Target,{vol_ix+1+col_ix*8},{vol}\n")
-                
     with open(os.path.join(out_folder, source_fname), "w") as source_file:
         for col_ix, column in enumerate(source_df):
             series = source_df.loc[:, column]
