@@ -8,10 +8,10 @@ block_cipher = None
 a = Analysis(
             ['od_normalizer.py'],
             # The local path to the script for compilation
-            pathex=['C:\Projects\OD-Normalizer'],
+            pathex=[r'C:\Users\User\Downloads\OD-Normalizer-main'],
             binaries=[],
             datas=[],
-            hiddenimports=[],
+            hiddenimports=["packaging", "packaging.version", "packaging.specifiers", "packaging.requirements"],
             hookspath=[],
             runtime_hooks=[],
             excludes=[],
