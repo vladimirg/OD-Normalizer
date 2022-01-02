@@ -6,6 +6,39 @@ import os
 from gooey import GooeyParser, Gooey 
 from itertools import product
 
+def parse_excluded_wells(excluded_str):
+    """
+    >>> parse_excluded_wells('')
+    []
+    >>> parse_excluded_wells('B3:C5')
+    ['B3', 'B4', 'B5', 'C3', 'C4', 'C5']
+    >>> parse_excluded_wells('G5,,F6')
+    ['G5', 'F6']
+    >>> parse_excluded_wells(' G5 ,B3:  C5, F6  ')
+    ['G5', 'B3', 'B4', 'B5', 'C3', 'C4', 'C5', 'F6']
+    >>> parse_excluded_wells('A10:A12')
+    ['A10', 'A11', 'A12']
+    """
+    
+    result = []
+    
+    parts = excluded_str.replace(" ", "").split(',')
+    for p in parts:
+        if ":" in p:
+            start_well, stop_well = p.split(":")
+            start_row, start_col = start_well[0], int(start_well[1:])
+            stop_row, stop_col = stop_well[0], int(stop_well[1:])
+            
+            row_range = "ABCDEFGH"
+            for row_label in row_range[row_range.index(start_row):
+                                       row_range.index(stop_row)+1]:
+                for col in range(start_col, stop_col+1):
+                    result.append(f"{row_label}{col}")
+        elif p:
+            result.append(p)
+    
+    return result
+
 # NB: run with --ignore-gooey to force the CLI.
 # NB: run using pythonw (instead of regular python) on the command line to
 #     invoke this script as a GUI.
@@ -29,11 +62,31 @@ def main():
         "--max-pipette", type=int, default=197,
         metavar="Maximum pipetting volume (µL)"),
     parser.add_argument(
-        "--out-folder", type=str, widget="DirChooser", default=os.getcwd(),
+        "--exclude-wells", metavar="Wells to exclude", type=str,
+        help="Excluded wells will receive half of the maximum DDW and nothing "+
+        "from Source. Example: A4,B5:H7,C10")
+    parser.add_argument(
+        "--no-ddw-in-excluded", action="store_true",
+        metavar="Keep excluded wells empty",
+        help="By default, dispense the final volume (or the maximum pippetting "+
+        "volume) of DDW into excluded wells. If this is checked, keep them empty.")
+    parser.add_argument(
+        "--out-folder", type=str, widget="DirChooser",
         metavar="Output folder",
         help="The output folder where 'ddw.csv' and 'source.csv' will be saved.")
     
     args = parser.parse_args()
+    try:
+        # If this argument is empty, it will be parsed as None, not as an empty string:
+        excluded_wells = parse_excluded_wells(args.exclude_wells if args.exclude_wells is not None else '')
+    except:
+        from traceback import format_exc
+        print("ERROR: 'Wells to exclude' argument is invalid, aborting. Traceback:")
+        print(format_exc())
+        return
+    
+    if excluded_wells:
+        print(f"Excluding wells: {', '.join(excluded_wells)}")
     
     in_file = args.in_file
     wb = load_workbook(filename=in_file)
@@ -63,6 +116,15 @@ def main():
     source_df = (target_od * target_vol / df).round().astype(int)
     ddw_df = (target_vol - source_df).round().astype(int)
     
+    for well in excluded_wells:
+        row, col = well[0], int(well[1:])
+        if args.no_ddw_in_excluded:
+            ddw_vol = 0
+        else:
+            ddw_vol = min(max_pipette, target_vol)
+        ddw_df.loc[row, col] = ddw_vol
+        source_df.loc[row, col] = 0
+    
     df_labels = list(product(df.index, df.columns))
     
     data_to_test = (
@@ -78,7 +140,9 @@ def main():
     )
     
     for test_df, test_func, msg in data_to_test:
-        off_labels = [l for l in df_labels if test_func(test_df.loc[l[0], l[1]])]
+        off_labels = [l for l in df_labels
+                      if test_func(test_df.loc[l[0], l[1]]) and
+                      f"{l[0]}{l[1]}" not in excluded_wells]
         if off_labels:
             print(msg)
             for row_ix, col_ix in off_labels:
