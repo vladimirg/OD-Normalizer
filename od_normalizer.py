@@ -96,7 +96,7 @@ def main():
     # the tip identifiers (1-8) on the first row and then the volumes on the
     # second row.
     with open(os.path.join(out_folder, ddw_fname), "w") as ddw_file:
-        ddw_file.write(f"Tip,{','.join(str(i) for i in list(range(1, 9))*8)}\n")
+        ddw_file.write(f"Tip,{','.join(str(i) for i in list(range(1, 9))*12)}\n")
         ddw_file.write(f"Volume,{','.join(','.join(ddw_df[i].astype(str)) for i in ddw_df)}\n")
     
     # The source-to-target is a worklist (CSV) with the following format:
@@ -113,7 +113,7 @@ def main():
                 pos = vol_ix+1+col_ix*8
                 source_file.write(f"Source,{pos},Target,{pos},{vol}\n")
                 
-    print("Done!") # TODO: how to change the output of Gooey?
+    print("Done!")
     
 
 if __name__ == "__main__":
