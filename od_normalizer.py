@@ -39,19 +39,34 @@ def parse_excluded_wells(excluded_str):
     
     return result
 
+def keep_only_first_unique(lst):
+    """
+    >>> keep_only_first_unique([])
+    []
+    >>> keep_only_first_unique(["A1", "A2"])
+    ['A1', 'A2']
+    >>> keep_only_first_unique(["A1", "A2", "A1", "A1", "A2", "A1"])
+    ['A1', 'A2']
+    """
+    return [w for ix, w in enumerate(lst) if ix == lst.index(w)]
+
 # NB: run with --ignore-gooey to force the CLI.
 # NB: run using pythonw (instead of regular python) on the command line to
 #     invoke this script as a GUI.
 @Gooey(program_name="OD Normalizer")
 def main():
+    #### Parser set up
     parser = GooeyParser()
-    # TODO: how to make the labels of the arguments in Gooey nicer?
-    # (Specifically, how to divorce them from their attribute names?)
     parser.add_argument(
         "--in-file", type=str, widget="FileChooser",
         metavar="Input Excel file", required=True,
         help="The input Excel file from Sunrise. The ODs should be stored in Sheet1 within the workbook.")
     parser.add_argument("--target-od", type=float, metavar="Target OD", required=True)
+    parser.add_argument(
+        "--blank-wells", metavar="Wells to use as blanks", type=str,
+        help="The mean of the blank wells will be substracted from the OD of the "+
+        "Source wells. Blank wells are considered as 'excluded' wells. "+
+        "Leave empty to use the nominal OD. Example: A4,B5:H7,C10")
     parser.add_argument(
         "--final-volume", type=int, default=200,
         metavar="Final volume (µL)", help="The final volume in the Target plate.")
@@ -63,8 +78,8 @@ def main():
         metavar="Maximum pipetting volume (µL)"),
     parser.add_argument(
         "--exclude-wells", metavar="Wells to exclude", type=str,
-        help="Excluded wells will receive half of the maximum DDW and nothing "+
-        "from Source. Example: A4,B5:H7,C10")
+        help="Excluded wells will be ignored in OD calculationgs and not "+
+        "receive anything from the Source. Example: A4,B5:H7,C10")
     parser.add_argument(
         "--no-ddw-in-excluded", action="store_true",
         metavar="Keep excluded wells empty",
@@ -75,7 +90,25 @@ def main():
         metavar="Output folder",
         help="The output folder where 'ddw.csv' and 'source.csv' will be saved.")
     
+    #### Argument parsing and reporting
     args = parser.parse_args()
+    
+    in_file = args.in_file
+    out_folder = args.out_folder
+    target_od = args.target_od
+    target_vol = args.final_volume
+    min_pipette = args.min_pipette
+    max_pipette = args.max_pipette
+    
+    try:
+        # If this argument is empty, it will be parsed as None, not as an empty string:
+        blank_wells = parse_excluded_wells(args.blank_wells if args.blank_wells is not None else '')
+    except:
+        from traceback import format_exc
+        print("ERROR: 'Wells to use as blanks' argument is invalid, aborting. Traceback:")
+        print(format_exc())
+        return
+    
     try:
         # If this argument is empty, it will be parsed as None, not as an empty string:
         excluded_wells = parse_excluded_wells(args.exclude_wells if args.exclude_wells is not None else '')
@@ -85,10 +118,16 @@ def main():
         print(format_exc())
         return
     
+    if blank_wells:
+        blank_wells = keep_only_first_unique(blank_wells)
+        print(f"Using the following wells as blanks: {', '.join(blank_wells)}")
+    
+    excluded_wells += blank_wells
     if excluded_wells:
+        excluded_wells = keep_only_first_unique(excluded_wells)
         print(f"Excluding wells: {', '.join(excluded_wells)}")
     
-    in_file = args.in_file
+    #### Loading the input file
     wb = load_workbook(filename=in_file)
     sheet = wb["Sheet1"]
     
@@ -103,19 +142,23 @@ def main():
         usecols="B:M",
     ).set_index(pd.Index(list("ABCDEFGH")))
     
-    target_od = args.target_od
-    target_vol = args.final_volume
-    min_pipette = args.min_pipette
-    max_pipette = args.max_pipette
+    #### Normalizing the OD relative to blank wells
+    if blank_wells:
+        blank_od = 0
+        for well in blank_wells:
+            row, col = well[0], int(well[1:])
+            blank_od += df.loc[row, col]
+        blank_od = blank_od/len(blank_wells)
+        
+        print(f"The blank OD is: {blank_od}")
+        
+        df = df - blank_od
     
-    # TODO: handle the following cases:
-    # 1: wells below target_id
-    # 2: need to take less than 1 uL of source
-    # 3: need to take more than 197 uL of source
-    
+    #### Calculating the Source and DDW volumes
     source_df = (target_od * target_vol / df).round().astype(int)
     ddw_df = (target_vol - source_df).round().astype(int)
     
+    #### Setting defaults for excluded wells
     for well in excluded_wells:
         row, col = well[0], int(well[1:])
         if args.no_ddw_in_excluded:
@@ -125,6 +168,7 @@ def main():
         ddw_df.loc[row, col] = ddw_vol
         source_df.loc[row, col] = 0
     
+    #### Checking wells for exceeding the min/max pipetting volumes
     df_labels = list(product(df.index, df.columns))
     
     data_to_test = (
@@ -148,7 +192,7 @@ def main():
             for row_ix, col_ix in off_labels:
                 print(f"{row_ix}{col_ix} ({'ABCDEFGH'.index(row_ix)*12+col_ix}): {test_df.loc[row_ix, col_ix]}")
     
-    out_folder = args.out_folder
+    #### Writing the output files
     ddw_fname = "ddw.csv"
     source_fname = "source.csv"
     
@@ -177,7 +221,7 @@ def main():
                 pos = vol_ix+1+col_ix*8
                 source_file.write(f"Source,{pos},Target,{pos},{vol}\n")
                 
-    print("Done!")
+    print("Done!\n")
     
 
 if __name__ == "__main__":
