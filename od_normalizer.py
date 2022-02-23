@@ -86,6 +86,19 @@ def main():
         help="By default, dispense the final volume (or the maximum pippetting "+
         "volume) of DDW into excluded wells. If this is checked, keep them empty.")
     parser.add_argument(
+        "--source_is_target", action="store_true",
+        metavar="Dilute into the Source plate",
+        help="Make the dilutions in the Source plate (no Target plate needed). "+
+        "If you specify this, you MUST also specify a column or a row offset.")
+    parser.add_argument(
+        "--row-offset", type=int, default=0,
+        metavar="Row offset in Target",
+        help="Positive offsets: A->H, negative: H->A. Wraps around!")
+    parser.add_argument(
+        "--col-offset", type=int, default=0,
+        metavar="Column offset in Target",
+        help="Positive offsets: 1->12, negative: 12->1. Wraps around!")
+    parser.add_argument(
         "--out-folder", type=str, widget="DirChooser",
         metavar="Output folder",
         help="The output folder where 'ddw.csv' and 'source.csv' will be saved.")
@@ -93,6 +106,8 @@ def main():
     #### Argument parsing and reporting
     args = parser.parse_args()
     
+    row_offset = args.row_offset
+    col_offset = args.col_offset
     in_file = args.in_file
     out_folder = args.out_folder
     target_od = args.target_od
@@ -192,6 +207,20 @@ def main():
             for row_ix, col_ix in off_labels:
                 print(f"{row_ix}{col_ix} ({'ABCDEFGH'.index(row_ix)*12+col_ix}): {test_df.loc[row_ix, col_ix]}")
     
+    #### Transpose the rows and columns in ddw_df
+    if row_offset != 0:
+        old_index = ddw_df.index
+        ddw_df = pd.concat([
+            ddw_df.iloc[-row_offset:],
+            ddw_df.iloc[:-row_offset]
+        ])
+        ddw_df.set_index(old_index, inplace=True)
+    
+    if col_offset != 0:
+        cols = ddw_df.columns
+        ddw_df = ddw_df[list(cols[-col_offset:]) + list(cols[:-col_offset])]
+        ddw_df.columns = cols
+    
     #### Writing the output files
     ddw_fname = "ddw.csv"
     source_fname = "source.csv"
@@ -204,6 +233,11 @@ def main():
     # the tip identifiers (1-8) on the first row and then the volumes on the
     # second row.
     with open(os.path.join(out_folder, ddw_fname), "w") as ddw_file:
+        # NB: it's important for the entire plate to be included, as the wells
+        # are processed in order, and the "Tip" column is just for humans and
+        # is ignored by the robot. And while it may be possible to tell the
+        # robot how many rows are required, in the existing way we're throwing
+        # out at most 7 tips per plate, which isn't that bad.
         ddw_file.write(f"Tip,{','.join(str(i) for i in list(range(1, 9))*12)}\n")
         ddw_file.write(f"Volume,{','.join(','.join(ddw_df[i].astype(str)) for i in ddw_df)}\n")
     
@@ -218,8 +252,16 @@ def main():
         for col_ix, column in enumerate(source_df):
             series = source_df.loc[:, column]
             for vol_ix, vol in enumerate(series):
-                pos = vol_ix+1+col_ix*8
-                source_file.write(f"Source,{pos},Target,{pos},{vol}\n")
+                # NB: this will not prevent the robot from taking a tip, but it
+                # will force it to use the tips it took.
+                if vol == 0:
+                    continue
+                
+                source_pos = vol_ix+1+col_ix*8
+                target_pos = (vol_ix+1+row_offset-1)%8+1 + col_ix*8
+                target_pos = (target_pos + col_offset*8-1) % 96+1 
+                target_label = "Target" if not args.source_is_target else "Source"
+                source_file.write(f"Source,{source_pos},{target_label},{target_pos},{vol}\n")
                 
     print("Done!\n")
     
