@@ -69,13 +69,13 @@ def main():
         "Leave empty to use the nominal OD. Example: A4,B5:H7,C10")
     parser.add_argument(
         "--final-volume", type=int, default=200,
-        metavar="Final volume (µL)", help="The final volume in the Target plate.")
+        metavar="Final volume (uL)", help="The final volume in the Target plate.")
     parser.add_argument(
         "--min-pipette", type=int, default=5,
-        metavar="Minimum pipetting volume (µL)")
+        metavar="Minimum pipetting volume (uL)")
     parser.add_argument(
         "--max-pipette", type=int, default=197,
-        metavar="Maximum pipetting volume (µL)"),
+        metavar="Maximum pipetting volume (uL)"),
     parser.add_argument(
         "--exclude-wells", metavar="Wells to exclude", type=str,
         help="Excluded wells will be ignored in OD calculationgs and not "+
