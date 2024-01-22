@@ -113,7 +113,9 @@ def main():
     target_od = args.target_od
     target_vol = args.final_volume
     min_pipette = args.min_pipette
-    max_pipette = args.max_pipette
+    # NB: (target_vol - min_pipette) is useful here so that we can guarantee
+    # that the target_vol will be reached exactly in certain edge cases.
+    max_pipette = min(args.max_pipette, target_vol - min_pipette)
     
     try:
         # If this argument is empty, it will be parsed as None, not as an empty string:
@@ -146,16 +148,32 @@ def main():
     wb = load_workbook(filename=in_file)
     sheet = wb["Sheet1"]
     
+    od_excel_type = None
     for row_ix, row in enumerate(sheet.iter_rows()):
-        if "Rawdata" in str(row[0].value):
-            break
+        cell_value = str(row[0].value)
+        if "Rawdata" in cell_value:
+            od_excel_type = "Sunrise"
+        elif "<>" in str(row[0].value): # From F200
+            od_excel_type = "F200" # Also works for the F50
         
+        if od_excel_type:
+            break
+    
+    if od_excel_type is None:
+        print("ERROR: 'Sheet1' is malformed - has neither a 'Rawdata' or '<>'" +
+              " prefix. Can't read ODs, aborting.")
+        return
+    
+    # TODO: we don't handle the case where the table is partial and the indices
+    # are supplied along with it.
+    # NB: we allow for empty ODs - these are marked with -1 and are expected
+    # to be ignored as part of 'excluded wells'.
     df = pd.read_excel(
         in_file,
-        skiprows=row_ix+1,
+        skiprows=row_ix+1 if od_excel_type == "Sunrise" else row_ix,
         nrows=8,
         usecols="B:M",
-    ).set_index(pd.Index(list("ABCDEFGH")))
+    ).set_index(pd.Index(list("ABCDEFGH"))).fillna(-1)
     
     #### Normalizing the OD relative to blank wells
     if blank_wells:
@@ -171,41 +189,46 @@ def main():
     
     #### Calculating the Source and DDW volumes
     source_df = (target_od * target_vol / df).round().astype(int)
-    ddw_df = (target_vol - source_df).round().astype(int)
+    ddw_df = pd.DataFrame(index=df.index, columns=df.columns)
     
-    #### Setting defaults for excluded wells
-    for well in excluded_wells:
-        row, col = well[0], int(well[1:])
-        if args.no_ddw_in_excluded:
-            ddw_vol = 0
-        else:
-            ddw_vol = min(max_pipette, target_vol)
-        ddw_df.loc[row, col] = ddw_vol
-        source_df.loc[row, col] = 0
-    
-    #### Checking wells for exceeding the min/max pipetting volumes
     df_labels = list(product(df.index, df.columns))
-    
-    data_to_test = (
-        # DataFrame, func(actual), message, default
-        (source_df, lambda a: a < min_pipette,
-         f"Aspiration volume from Source is smaller than the minimum {min_pipette} µL in these wells:"),
-        (source_df, lambda a: a > max_pipette,
-         f"Aspiration volume from Source is larger than the maximum {max_pipette} µL in these wells:"),
-        (ddw_df, lambda a: a < min_pipette,
-         f"Aspiration volume from DDW is smaller than the minimum {min_pipette} µL in these wells:"),
-        (ddw_df, lambda a: a > max_pipette,
-         f"Aspiration volume from DDW is larger than the maximum {max_pipette} µL in these wells:"),
-    )
-    
-    for test_df, test_func, msg in data_to_test:
-        off_labels = [l for l in df_labels
-                      if test_func(test_df.loc[l[0], l[1]]) and
-                      f"{l[0]}{l[1]}" not in excluded_wells]
-        if off_labels:
-            print(msg)
-            for row_ix, col_ix in off_labels:
-                print(f"{row_ix}{col_ix} ({'ABCDEFGH'.index(row_ix)*12+col_ix}): {test_df.loc[row_ix, col_ix]}")
+    for row_letter, col_num in df_labels:
+        well_name = f"{row_letter}{col_num}"
+        ddw = None
+        new_source_vol = None
+        
+        # TODO: we can't gurantee that the final volume will match the target
+        # volume for edge cases - this may require double pipetting, depending
+        # on the permissible min/max and target volume, which is too much of a 
+        # hassle.
+        if well_name in excluded_wells:
+            new_source_vol = 0
+            if args.no_ddw_in_excluded:
+                ddw = 0
+            else:
+                ddw = args.max_pipette
+        else:
+            curr_source_vol = source_df.loc[row_letter, col_num]
+            new_source_vol = curr_source_vol
+            ddw = max(min(target_vol - curr_source_vol, max_pipette), min_pipette)
+            well_ix = f"{'ABCDEFGH'.index(row_letter)+1+(col_num-1)*8}"
+            if curr_source_vol < min_pipette:
+                new_source_vol = min_pipette
+                ddw = min(target_vol - new_source_vol, max_pipette)
+                print(f"{well_name} ({well_ix}) is too concentrated (OD={df.loc[row_letter,col_num]}), "+
+                      f"defaulting to taking the minimum pipetting volume ({min_pipette} uL). " +
+                      f"Expected OD is {min_pipette*df.loc[row_letter,col_num]/(new_source_vol+ddw):.3}.")
+            elif curr_source_vol > max_pipette:
+                new_source_vol = args.max_pipette
+                ddw = 0
+                print(f"{well_name} ({well_ix}) is too diluted (OD={df.loc[row_letter,col_num]}), "+
+                      f"defaulting to taking the maximum pipetting volume ({max_pipette} uL) and no DDW. " +
+                      f"Expected OD is {max_pipette*df.loc[row_letter,col_num]/(new_source_vol+ddw):.3}.")
+        
+        assert ddw is not None
+        ddw_df.loc[row_letter, col_num] = ddw
+        assert new_source_vol is not None
+        source_df.loc[row_letter, col_num] = new_source_vol
     
     #### Transpose the rows and columns in ddw_df
     if row_offset != 0:
