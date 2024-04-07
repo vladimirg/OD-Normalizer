@@ -60,8 +60,15 @@ def main():
     parser.add_argument(
         "--in-file", type=str, widget="FileChooser",
         metavar="Input Excel file", required=True,
-        help="The input Excel file from Sunrise. The ODs should be stored in Sheet1 within the workbook.")
+        help="The input Excel file from Sunrise. The ODs should be stored in the specified sheet within the workbook.")
+    parser.add_argument(
+        "--sheet-name", metavar="The sheet name in the excel file", type=str, default="Sheet1",
+        help="The sheet name in the excel file")
     parser.add_argument("--target-od", type=float, metavar="Target OD", required=True)
+    parser.add_argument(
+        "--dilution-factor", type=float, metavar="Dilution factor", default=1,
+        help="The stored ODs will be multiplied by this factor before calculating the volumes. "+
+        "Useful if the measured plate was diluted from the source plate.")
     parser.add_argument(
         "--blank-wells", metavar="Wells to use as blanks", type=str,
         help="The mean of the blank wells will be substracted from the OD of the "+
@@ -86,7 +93,7 @@ def main():
         help="By default, dispense the final volume (or the maximum pippetting "+
         "volume) of DDW into excluded wells. If this is checked, keep them empty.")
     parser.add_argument(
-        "--source_is_target", action="store_true",
+        "--source-is-target", action="store_true",
         metavar="Dilute into the Source plate",
         help="Make the dilutions in the Source plate (no Target plate needed). "+
         "If you specify this, you MUST also specify a column or a row offset.")
@@ -145,35 +152,36 @@ def main():
         print(f"Excluding wells: {', '.join(excluded_wells)}")
     
     #### Loading the input file
+    sheet_name = args.sheet_name
     wb = load_workbook(filename=in_file)
-    sheet = wb["Sheet1"]
+    sheet = wb[sheet_name]
     
-    od_excel_type = None
+    # <> marks the start of the OD table - find it and store it in row_ix.
     for row_ix, row in enumerate(sheet.iter_rows()):
-        cell_value = str(row[0].value)
-        if "Rawdata" in cell_value:
-            od_excel_type = "Sunrise"
-        elif "<>" in str(row[0].value): # From F200
-            od_excel_type = "F200" # Also works for the F50
-        
-        if od_excel_type:
+        if "<>" in str(row[0].value):
             break
     
-    if od_excel_type is None:
-        print("ERROR: 'Sheet1' is malformed - has neither a 'Rawdata' or '<>'" +
-              " prefix. Can't read ODs, aborting.")
-        return
-    
-    # TODO: we don't handle the case where the table is partial and the indices
-    # are supplied along with it.
     # NB: we allow for empty ODs - these are marked with -1 and are expected
     # to be ignored as part of 'excluded wells'.
-    df = pd.read_excel(
+    # For convenience, we create an empty DataFrame that has all the rows and
+    # columns, and then update it with the DataFrame read from the excel, which
+    # can be incomplete in terms of rows and columns.
+    df = pd.DataFrame(
+        {col_ix: [-1] * 8 for col_ix in range(1, 13)}
+    ).set_index(pd.Index(list("ABCDEFGH")))
+
+    df_from_excel = pd.read_excel(
         in_file,
-        skiprows=row_ix+1 if od_excel_type == "Sunrise" else row_ix,
-        nrows=8,
-        usecols="B:M",
-    ).set_index(pd.Index(list("ABCDEFGH"))).fillna(-1)
+        skiprows=row_ix,
+        sheet_name=sheet_name
+    ).set_index("<>")
+    # Filter out irrelevant indices (if pandas was too inclusive in reading the table):
+    df_from_excel = df_from_excel.loc[
+        [ix for ix in df_from_excel.index if str(ix) in list("ABCDEFGH")],
+        [ix for ix in df_from_excel.columns if ix in range(1, 13)]
+    ] * args.dilution_factor
+
+    df.update(df_from_excel)
     
     #### Normalizing the OD relative to blank wells
     if blank_wells:
