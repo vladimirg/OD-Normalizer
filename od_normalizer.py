@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import pandas as pd
+import numpy as np
 from openpyxl import load_workbook
 import os
 from gooey import GooeyParser, Gooey 
@@ -98,13 +99,19 @@ def main():
         help="Make the dilutions in the Source plate (no Target plate needed). "+
         "If you specify this, you MUST also specify a column or a row offset.")
     parser.add_argument(
-        "--row-offset", type=int, default=0,
+        "--row-offsets", type=str, default="0",
         metavar="Row offset in Target",
-        help="Positive offsets: A->H, negative: H->A. Wraps around!")
+        help="Positive offsets: A->H, negative: H->A. Wraps around! It's possible "+
+        "to make replicas in different locations by concatenating offsets with a comma, "+
+        "e.g.: 0,3. NB: overlap errors are not checked and not reported! Be careful and "+
+        "verify the output manually!")
     parser.add_argument(
-        "--col-offset", type=int, default=0,
+        "--col-offsets", type=str, default="0",
         metavar="Column offset in Target",
-        help="Positive offsets: 1->12, negative: 12->1. Wraps around!")
+        help="Positive offsets: 1->12, negative: 12->1. Wraps around! It's possible "+
+        "to make replicas in different locations by concatenating offsets with a comma, "+
+        "e.g.: 0,6. NB: overlap errors are not checked and not reported! Be careful and "+
+        "verify the output manually!")
     parser.add_argument(
         "--out-folder", type=str, widget="DirChooser",
         metavar="Output folder",
@@ -113,8 +120,8 @@ def main():
     #### Argument parsing and reporting
     args = parser.parse_args()
     
-    row_offset = args.row_offset
-    col_offset = args.col_offset
+    row_offsets = [int(i) for i in args.row_offsets.split(",")]
+    col_offsets = [int(i) for i in args.col_offsets.split(",")]
     in_file = args.in_file
     out_folder = args.out_folder
     target_od = args.target_od
@@ -196,8 +203,12 @@ def main():
         df = df - blank_od
     
     #### Calculating the Source and DDW volumes
-    source_df = (target_od * target_vol / df).round().astype(int)
-    ddw_df = pd.DataFrame(index=df.index, columns=df.columns)
+    base_source_df = (target_od * target_vol / df).round().astype(int)
+
+    # To handle the offsets, we first seed the tables with defaults, and then
+    # inject the final values where needed.
+    ddw_df = pd.DataFrame(index=df.index, columns=df.columns, data=np.ones((8, 12))*(0 if args.no_ddw_in_excluded else args.max_pipette))
+    source_df = pd.DataFrame(index=df.index, columns=df.columns, data=np.zeros((8, 12)))
     
     df_labels = list(product(df.index, df.columns))
     for row_letter, col_num in df_labels:
@@ -210,47 +221,35 @@ def main():
         # on the permissible min/max and target volume, which is too much of a 
         # hassle.
         if well_name in excluded_wells:
-            new_source_vol = 0
-            if args.no_ddw_in_excluded:
-                ddw = 0
-            else:
-                ddw = args.max_pipette
-        else:
-            curr_source_vol = source_df.loc[row_letter, col_num]
-            new_source_vol = curr_source_vol
-            ddw = max(min(target_vol - curr_source_vol, max_pipette), min_pipette)
-            well_ix = f"{'ABCDEFGH'.index(row_letter)+1+(col_num-1)*8}"
-            if curr_source_vol < min_pipette:
-                new_source_vol = min_pipette
-                ddw = min(target_vol - new_source_vol, max_pipette)
-                print(f"{well_name} ({well_ix}) is too concentrated (OD={df.loc[row_letter,col_num]}), "+
-                      f"defaulting to taking the minimum pipetting volume ({min_pipette} uL). " +
-                      f"Expected OD is {min_pipette*df.loc[row_letter,col_num]/(new_source_vol+ddw):.3}.")
-            elif curr_source_vol > max_pipette:
-                new_source_vol = args.max_pipette
-                ddw = 0
-                print(f"{well_name} ({well_ix}) is too diluted (OD={df.loc[row_letter,col_num]}), "+
-                      f"defaulting to taking the maximum pipetting volume ({max_pipette} uL) and no DDW. " +
-                      f"Expected OD is {max_pipette*df.loc[row_letter,col_num]/(new_source_vol+ddw):.3}.")
+            continue
         
-        assert ddw is not None
-        ddw_df.loc[row_letter, col_num] = ddw
+        curr_source_vol = base_source_df.loc[row_letter, col_num]
+        new_source_vol = curr_source_vol
+        ddw = max(min(target_vol - curr_source_vol, max_pipette), min_pipette)
+        well_ix = f"{'ABCDEFGH'.index(row_letter)+1+(col_num-1)*8}"
+        if curr_source_vol < min_pipette:
+            new_source_vol = min_pipette
+            ddw = min(target_vol - new_source_vol, max_pipette)
+            print(f"{well_name} ({well_ix}) is too concentrated (OD={df.loc[row_letter,col_num]}), "+
+                    f"defaulting to taking the minimum pipetting volume ({min_pipette} uL). " +
+                    f"Expected OD is {min_pipette*df.loc[row_letter,col_num]/(new_source_vol+ddw):.3}.")
+        elif curr_source_vol > max_pipette:
+            new_source_vol = args.max_pipette
+            ddw = 0
+            print(f"{well_name} ({well_ix}) is too diluted (OD={df.loc[row_letter,col_num]}), "+
+                    f"defaulting to taking the maximum pipetting volume ({max_pipette} uL) and no DDW. " +
+                    f"Expected OD is {max_pipette*df.loc[row_letter,col_num]/(new_source_vol+ddw):.3}.")
+        
         assert new_source_vol is not None
         source_df.loc[row_letter, col_num] = new_source_vol
-    
-    #### Transpose the rows and columns in ddw_df
-    if row_offset != 0:
-        old_index = ddw_df.index
-        ddw_df = pd.concat([
-            ddw_df.iloc[-row_offset:],
-            ddw_df.iloc[:-row_offset]
-        ])
-        ddw_df.set_index(old_index, inplace=True)
-    
-    if col_offset != 0:
-        cols = ddw_df.columns
-        ddw_df = ddw_df[list(cols[-col_offset:]) + list(cols[:-col_offset])]
-        ddw_df.columns = cols
+
+        assert ddw is not None
+        for row_offset in row_offsets:
+            target_row_letter = "ABCDEFGH"[ ("ABCDEFGH".index(row_letter) + row_offset) % 8 ]
+            for col_offset in col_offsets:
+                target_col_num = (col_num-1 + col_offset) % 12 + 1
+                ddw_df.loc[target_row_letter, target_col_num] = ddw
+                
     
     #### Writing the output files
     ddw_fname = "ddw.csv"
@@ -282,17 +281,19 @@ def main():
     with open(os.path.join(out_folder, source_fname), "w") as source_file:
         for col_ix, column in enumerate(source_df):
             series = source_df.loc[:, column]
-            for vol_ix, vol in enumerate(series):
-                # NB: this will not prevent the robot from taking a tip, but it
-                # will force it to use the tips it took.
-                if vol == 0:
-                    continue
-                
-                source_pos = vol_ix+1+col_ix*8
-                target_pos = (vol_ix+1+row_offset-1)%8+1 + col_ix*8
-                target_pos = (target_pos + col_offset*8-1) % 96+1 
-                target_label = "Target" if not args.source_is_target else "Source"
-                source_file.write(f"Source,{source_pos},{target_label},{target_pos},{vol}\n")
+            for row_offset in row_offsets:
+                for col_offset in col_offsets:
+                    for vol_ix, vol in enumerate(series):
+                        # NB: this will not prevent the robot from taking a tip, but it
+                        # will force it to use the tips it took.
+                        if vol == 0:
+                            continue
+                        
+                        source_pos = vol_ix+1+col_ix*8
+                        target_pos = (vol_ix+1+row_offset-1)%8+1 + col_ix*8
+                        target_pos = (target_pos + col_offset*8-1) % 96+1 
+                        target_label = "Target" if not args.source_is_target else "Source"
+                        source_file.write(f"Source,{source_pos},{target_label},{target_pos},{vol}\n")
                 
     print("Done!\n")
     
